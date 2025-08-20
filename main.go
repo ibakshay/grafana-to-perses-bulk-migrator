@@ -1,7 +1,9 @@
 package main
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -11,9 +13,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
+
+const persesVersion = "0.52.0-beta.3"
 
 var (
 	inputDir    = flag.String("input-dir", "", "Absolute path to input directory containing Plutono dashboard JSON files to migrate (required)")
@@ -65,6 +70,10 @@ func main() {
 		log.Printf("Warning: Failed to export dashboards: %v", err)
 	} else {
 		fmt.Printf("Dashboard export completed. Updated dashboards saved to %s\n", *outputDir)
+	}
+
+	if err := downloadPercli(); err != nil {
+		log.Printf("Warning: Failed to download percli: %v", err)
 	}
 
 	if *cleanUp {
@@ -284,4 +293,97 @@ func exportDashboard(uid, outputDir, port string) error {
 
 	fmt.Printf("  → Exported dashboard: %s\n", filename)
 	return nil
+}
+
+func downloadPercli() error {
+	binPath := "./bin/percli"
+
+	// Check if percli already exists
+	if _, err := os.Stat(binPath); err == nil {
+		fmt.Printf("percli binary already exists at %s, skipping download\n", binPath)
+		return nil
+	}
+
+	fmt.Println("Downloading percli binary...")
+
+	// Determine OS and architecture
+	osName := runtime.GOOS
+	arch := runtime.GOARCH
+	fmt.Printf("Detected platform: %s/%s\n", osName, arch)
+
+	// Handle special case for arm architecture
+	if arch == "arm" {
+		arch = "armv6"
+	}
+
+	// Handle Windows extension
+	executableName := "percli"
+	if osName == "windows" {
+		executableName = "percli.exe"
+	}
+
+	// Construct download URL
+	downloadURL := fmt.Sprintf("https://github.com/perses/perses/releases/download/v%s/perses_%s_%s_%s.tar.gz", persesVersion, persesVersion, osName, arch)
+
+	// Download the tar.gz file
+	resp, err := http.Get(downloadURL)
+	if err != nil {
+		return fmt.Errorf("failed to download percli: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("download failed with status %d", resp.StatusCode)
+	}
+
+	// Create gzip reader
+	gzipReader, err := gzip.NewReader(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to create gzip reader: %v", err)
+	}
+	defer gzipReader.Close()
+
+	// Create tar reader
+	tarReader := tar.NewReader(gzipReader)
+
+	// Create bin directory if it doesn't exist
+	if err := os.MkdirAll("./bin", 0755); err != nil {
+		return fmt.Errorf("failed to create bin directory: %v", err)
+	}
+
+	// Extract percli binary from tar
+	for {
+		header, err := tarReader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("failed to read tar header: %v", err)
+		}
+
+		// Look for the percli executable
+		if filepath.Base(header.Name) == executableName {
+			// Create the output file
+			outFile, err := os.Create(binPath)
+			if err != nil {
+				return fmt.Errorf("failed to create output file: %v", err)
+			}
+			defer outFile.Close()
+
+			// Copy the file content
+			if _, err := io.Copy(outFile, tarReader); err != nil {
+				return fmt.Errorf("failed to extract percli: %v", err)
+			}
+
+			// Make it executable
+			if err := os.Chmod(binPath, 0755); err != nil {
+				return fmt.Errorf("failed to make percli executable: %v", err)
+			}
+
+			fmt.Printf("Successfully downloaded percli to %s\n", binPath)
+			return nil
+		}
+	}
+
+	return fmt.Errorf("percli binary not found in the downloaded archive")
 }
