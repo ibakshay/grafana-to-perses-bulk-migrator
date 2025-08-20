@@ -18,8 +18,9 @@ import (
 var (
 	inputDir    = flag.String("dir", "", "Absolute path to directory containing Plutono dashboard JSON files to migrate (required)")
 	outputDir   = flag.String("output", "", "Absolute path to output directory for migrated files (default: <input-dir>/.migrated)")
-	cleanUp     = flag.Bool("cleanup", false, "Cleanup Grafana container after migration (default: false)")
+	cleanUp     = flag.Bool("cleanup", true, "Cleanup Grafana container after migration (default: false)")
 	grafanaPort = flag.String("port", "3000", "Port for Grafana container")
+	waitTime    = flag.Duration("wait", 10*time.Second, "Time to wait for Grafana to start (default: 10s)")
 	help        = flag.Bool("help", false, "Show help message")
 )
 
@@ -49,7 +50,7 @@ func main() {
 			log.Fatalf("Failed to start Grafana container: %v", err)
 		}
 		fmt.Printf("Waiting for Grafana to start...\n")
-		time.Sleep(10 * time.Second)
+		time.Sleep(*waitTime)
 	}
 
 	fmt.Printf("Grafana container ready on port %s\n", *grafanaPort)
