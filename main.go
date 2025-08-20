@@ -70,24 +70,33 @@ func main() {
 		log.Fatalf("Failed to setup Perses container: %v", err)
 	}
 
-	if err := migrateDashboards(*inputDir, *grafanaPort); err != nil {
+	if err := updateGrafanaSchemas(*inputDir, *grafanaPort); err != nil {
 		log.Fatalf("Import failed: %v", err)
 	}
 
-	fmt.Printf("Dashboard import completed. All dashboards are now in Grafana.\n")
+	fmt.Printf("✓ Schema update completed\n\n")
 
-	if err := exportDashboards(*outputDir, *grafanaPort, *inputDir); err != nil {
+	grafanaOutputDir := filepath.Join(*outputDir, "grafana")
+	if err := exportUpdatedGrafanaDashboards(grafanaOutputDir, *grafanaPort); err != nil {
 		log.Printf("Warning: Failed to export dashboards: %v", err)
-	} else {
-		fmt.Printf("Dashboard export completed. Updated dashboards saved to %s\n", *outputDir)
 	}
 
+	fmt.Println("Setting up Perses migration tools...")
 	if err := downloadPercli(); err != nil {
 		log.Fatalf("Failed to download percli: %v", err)
 	}
-	
+
 	if err := loginPercli(); err != nil {
 		log.Fatalf("Failed to login to Perses: %v", err)
+	}
+
+	fmt.Println("\nMigrating dashboards to Perses format...")
+	persesOutputDir := filepath.Join(*outputDir, "perses")
+	if err := migrateDashboardsToPerses(grafanaOutputDir, persesOutputDir); err != nil {
+		log.Printf("Warning: Failed to migrate dashboards to Perses: %v", err)
+	} else {
+		fmt.Printf("\n🎉 Migration completed!\n")
+		fmt.Printf("📁 Perses dashboards are available at: %s\n", persesOutputDir)
 	}
 }
 
@@ -160,7 +169,7 @@ func startPersesContainer(port string) error {
 	return nil
 }
 
-func migrateDashboards(inputDir, port string) error {
+func updateGrafanaSchemas(inputDir, port string) error {
 	files, err := filepath.Glob(filepath.Join(inputDir, "*.json"))
 	if err != nil {
 		return fmt.Errorf("failed to find JSON files: %v", err)
@@ -170,13 +179,12 @@ func migrateDashboards(inputDir, port string) error {
 		return fmt.Errorf("no JSON files found in directory: %s", inputDir)
 	}
 
-	fmt.Printf("Found %d JSON files to import\n", len(files))
+	fmt.Printf("Updating schemas for %d dashboards...\n", len(files))
 
 	for _, file := range files {
 		fmt.Printf("Processing file: %s\n", file)
 		fmt.Printf("Importing: %s\n", filepath.Base(file))
-
-		if err := migrateDashboard(file, port); err != nil {
+		if err := importDashboardToGrafana(file, port); err != nil {
 			log.Printf("Warning: Failed to import %s: %v", filepath.Base(file), err)
 			continue
 		}
@@ -187,7 +195,9 @@ func migrateDashboards(inputDir, port string) error {
 	return nil
 }
 
-func migrateDashboard(inputFile, port string) error {
+func importDashboardToGrafana(inputFile, port string) error {
+	// Import dashboard into Grafana to automatically update its schema to the latest version
+	// Grafana normalizes the dashboard format on import, ensuring compatibility with Perses migration
 	dashboardData, err := os.ReadFile(inputFile)
 	if err != nil {
 		return fmt.Errorf("failed to read dashboard file: %v", err)
@@ -253,7 +263,9 @@ func migrateDashboard(inputFile, port string) error {
 	return nil
 }
 
-func exportDashboards(outputDir, port, inputDir string) error {
+func exportUpdatedGrafanaDashboards(outputDir, port string) error {
+	// Export dashboards from Grafana after they've been imported and schema-normalized
+	// This gives us the latest Grafana schema format required for successful Perses migration
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create output directory: %v", err)
 	}
@@ -277,7 +289,7 @@ func exportDashboards(outputDir, port, inputDir string) error {
 
 	fmt.Printf("Found %d dashboards to export\n", len(dashboards))
 
-	fmt.Printf("\nExporting the dashboards to path %s:\n", outputDir)
+	fmt.Printf("\nExporting dashboards with updated schemas to path %s:\n This is necessary because Perses migration requires the latest Grafana schema format. \n", outputDir)
 	exportCount := 0
 	dashboardIndex := 0
 	for _, dashboard := range dashboards {
@@ -290,7 +302,7 @@ func exportDashboards(outputDir, port, inputDir string) error {
 			}
 
 			fmt.Printf("  [%d] Title: %v, UID: %v\n", dashboardIndex, dashboard["title"], uid)
-			if err := exportDashboard(uid, outputDir, port); err != nil {
+			if err := exportSingleUpdatedDashboard(uid, outputDir, port); err != nil {
 				log.Printf("Warning: Failed to export dashboard %s: %v", uid, err)
 				continue
 			}
@@ -303,7 +315,7 @@ func exportDashboards(outputDir, port, inputDir string) error {
 	return nil
 }
 
-func exportDashboard(uid, outputDir, port string) error {
+func exportSingleUpdatedDashboard(uid, outputDir, port string) error {
 	dashboardURL := fmt.Sprintf("http://admin:admin@localhost:%s/api/dashboards/uid/%s", port, uid)
 	resp, err := http.Get(dashboardURL)
 	if err != nil {
@@ -449,24 +461,79 @@ func downloadPercli() error {
 
 func loginPercli() error {
 	binPath := "./bin/percli"
-	
+
 	// Check if percli binary exists
 	if _, err := os.Stat(binPath); os.IsNotExist(err) {
 		return fmt.Errorf("percli binary not found at %s", binPath)
 	}
 
 	fmt.Println("Logging into Perses...")
-	
+
 	// Construct login URL with dynamic port
 	loginURL := fmt.Sprintf("http://localhost:%s", *persesPort)
-	
+
 	// Run percli login command
 	cmd := exec.Command(binPath, "login", loginURL, "-u", "admin", "-p", "password")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to login to Perses: %v, output: %s", err, string(output))
 	}
-	
-	fmt.Printf("Successfully logged into Perses at %s\n", loginURL)
+
+	fmt.Printf("✓ Logged into Perses\n")
+	return nil
+}
+
+func migrateDashboardsToPerses(grafanaOutputDir, persesOutputDir string) error {
+	binPath := "./bin/percli"
+
+	// Check if percli binary exists
+	if _, err := os.Stat(binPath); os.IsNotExist(err) {
+		return fmt.Errorf("percli binary not found at %s", binPath)
+	}
+
+	// Create perses output directory
+	if err := os.MkdirAll(persesOutputDir, 0755); err != nil {
+		return fmt.Errorf("failed to create perses output directory: %v", err)
+	}
+
+	// Find all JSON files in grafana output directory
+	files, err := filepath.Glob(filepath.Join(grafanaOutputDir, "*.json"))
+	if err != nil {
+		return fmt.Errorf("failed to find JSON files in grafana output directory: %v", err)
+	}
+
+	if len(files) == 0 {
+		return fmt.Errorf("no JSON files found in grafana output directory: %s", grafanaOutputDir)
+	}
+
+	fmt.Printf("Found %d Grafana dashboards to migrate to Perses\n", len(files))
+	fmt.Printf("\nMigrating dashboards to Perses Schema format:\n")
+
+	migratedCount := 0
+	for i, file := range files {
+		fmt.Printf("  [%d/%d] Migrating: %s\n", i+1, len(files), filepath.Base(file))
+
+		// Construct output file path in perses directory
+		outputFile := filepath.Join(persesOutputDir, filepath.Base(file))
+
+		// Run percli migrate command
+		cmd := exec.Command(binPath, "migrate", "--online", "-f", file, "-o", "json")
+		output, err := cmd.Output()
+		if err != nil {
+			log.Printf("Warning: Failed to migrate %s: %v", filepath.Base(file), err)
+			continue
+		}
+
+		// Save the migrated dashboard to perses output directory
+		if err := os.WriteFile(outputFile, output, 0644); err != nil {
+			log.Printf("Warning: Failed to save migrated dashboard %s: %v", filepath.Base(file), err)
+			continue
+		}
+
+		fmt.Printf("    → Successfully migrated to: %s\n", filepath.Base(outputFile))
+		migratedCount++
+	}
+
+	fmt.Printf("Successfully migrated %d/%d dashboards to Perses format\n", migratedCount, len(files))
 	return nil
 }
