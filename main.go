@@ -83,7 +83,11 @@ func main() {
 	}
 
 	if err := downloadPercli(); err != nil {
-		log.Printf("Warning: Failed to download percli: %v", err)
+		log.Fatalf("Failed to download percli: %v", err)
+	}
+	
+	if err := loginPercli(); err != nil {
+		log.Fatalf("Failed to login to Perses: %v", err)
 	}
 }
 
@@ -441,4 +445,28 @@ func downloadPercli() error {
 	}
 
 	return fmt.Errorf("percli binary not found in the downloaded archive")
+}
+
+func loginPercli() error {
+	binPath := "./bin/percli"
+	
+	// Check if percli binary exists
+	if _, err := os.Stat(binPath); os.IsNotExist(err) {
+		return fmt.Errorf("percli binary not found at %s", binPath)
+	}
+
+	fmt.Println("Logging into Perses...")
+	
+	// Construct login URL with dynamic port
+	loginURL := fmt.Sprintf("http://localhost:%s", *persesPort)
+	
+	// Run percli login command
+	cmd := exec.Command(binPath, "login", loginURL, "-u", "admin", "-p", "password")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to login to Perses: %v, output: %s", err, string(output))
+	}
+	
+	fmt.Printf("Successfully logged into Perses at %s\n", loginURL)
+	return nil
 }
