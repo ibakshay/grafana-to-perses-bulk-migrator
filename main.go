@@ -21,9 +21,10 @@ import (
 var (
 	inputDir      = flag.String("input-dir", "", "Absolute path to input directory containing Plutono dashboard JSON files to migrate (required)")
 	outputDir     = flag.String("output-dir", "", "Absolute path to output directory for migrated files (default: <input-dir>/.migrated)")
-	cleanUp       = flag.Bool("cleanup", false, "Cleanup Grafana container after migration (default: false)")
-	grafanaPort   = flag.String("port", "3000", "Port for Grafana container")
-	waitTime      = flag.Duration("wait", 10*time.Second, "Time to wait for Grafana to start (default: 10s)")
+	cleanUp       = flag.Bool("cleanup", false, "Cleanup containers after migration (default: false)")
+	grafanaPort   = flag.String("grafana-port", "3000", "Port for Grafana container")
+	persesPort    = flag.String("perses-port", "8080", "Port for Perses container")
+	waitTime      = flag.Duration("wait", 10*time.Second, "Time to wait for containers to start (default: 10s)")
 	persesVersion = flag.String("perses-version", "0.52.0-beta.3", "Version of percli to download (default: 0.52.0-beta.3)")
 	help          = flag.Bool("help", false, "Show help message")
 )
@@ -44,20 +45,30 @@ func main() {
 		*outputDir = filepath.Join(*inputDir, ".migrated")
 	}
 
-	running, err := isGrafanaContainerRunning(*grafanaPort)
-	if err != nil {
-		log.Fatalf("Failed to check if Grafana container is running: %v", err)
-	}
+	// Setup cleanup defer function
+	defer func() {
+		if *cleanUp {
+			if err := deleteContainer(*grafanaPort); err != nil {
+				log.Printf("Warning: Failed to delete Grafana container: %v", err)
+			} else {
+				fmt.Println("Grafana container deleted successfully")
+			}
 
-	if !running {
-		if err := startGrafanaContainer(*grafanaPort); err != nil {
-			log.Fatalf("Failed to start Grafana container: %v", err)
+			if err := deleteContainer(*persesPort); err != nil {
+				log.Printf("Warning: Failed to delete Perses container: %v", err)
+			} else {
+				fmt.Println("Perses container deleted successfully")
+			}
 		}
-		fmt.Printf("Waiting for Grafana to start...\n")
-		time.Sleep(*waitTime)
+	}()
+
+	if err := startGrafanaContainer(*grafanaPort); err != nil {
+		log.Fatalf("Failed to setup Grafana container: %v", err)
 	}
 
-	fmt.Printf("Grafana container ready on port %s\n", *grafanaPort)
+	if err := startPersesContainer(*persesPort); err != nil {
+		log.Fatalf("Failed to setup Perses container: %v", err)
+	}
 
 	if err := migrateDashboards(*inputDir, *grafanaPort); err != nil {
 		log.Fatalf("Import failed: %v", err)
@@ -74,25 +85,17 @@ func main() {
 	if err := downloadPercli(); err != nil {
 		log.Printf("Warning: Failed to download percli: %v", err)
 	}
-
-	if *cleanUp {
-		if err := deleteGrafanaContainer(*grafanaPort); err != nil {
-			log.Printf("Warning: Failed to delete Grafana container: %v", err)
-		} else {
-			fmt.Println("Grafana container deleted successfully")
-		}
-	}
 }
 
-func startGrafanaContainer(port string) error {
+func startContainer(name, image, hostPort, containerPort string) error {
 
-	fmt.Printf("Starting Grafana container on port %s...\n", port)
+	fmt.Printf("Starting %s container on port %s...\n", name, hostPort)
 
-	cmd := exec.Command("docker", "run", "-d", "-p", fmt.Sprintf("%s:3000", port), "grafana/grafana")
+	cmd := exec.Command("docker", "run", "-d", "--name", name, "-p", fmt.Sprintf("%s:%s", hostPort, containerPort), image)
 	return cmd.Run()
 }
 
-func isGrafanaContainerRunning(port string) (bool, error) {
+func isContainerRunning(port string) (bool, error) {
 	cmd := exec.Command("docker", "ps", "--filter", fmt.Sprintf("publish=%s", port), "--format", "{{.ID}}")
 	output, err := cmd.Output()
 	if err != nil {
@@ -101,7 +104,7 @@ func isGrafanaContainerRunning(port string) (bool, error) {
 	return len(output) > 0, nil
 }
 
-func deleteGrafanaContainer(port string) error {
+func deleteContainer(port string) error {
 	cmd := exec.Command("docker", "ps", "--filter", fmt.Sprintf("publish=%s", port), "--format", "{{.ID}}")
 	output, err := cmd.Output()
 	if err != nil {
@@ -114,6 +117,42 @@ func deleteGrafanaContainer(port string) error {
 		return deleteCmd.Run()
 	}
 
+	return nil
+}
+
+func startGrafanaContainer(port string) error {
+	running, err := isContainerRunning(port)
+	if err != nil {
+		return fmt.Errorf("failed to check if Grafana container is running: %v", err)
+	}
+
+	if !running {
+		if err := startContainer("grafana", "grafana/grafana", port, "3000"); err != nil {
+			return fmt.Errorf("failed to start Grafana container: %v", err)
+		}
+		fmt.Printf("Waiting for Grafana to start...\n")
+		time.Sleep(*waitTime)
+	}
+
+	fmt.Printf("Grafana container ready on port %s\n", port)
+	return nil
+}
+
+func startPersesContainer(port string) error {
+	running, err := isContainerRunning(port)
+	if err != nil {
+		return fmt.Errorf("failed to check if Perses container is running: %v", err)
+	}
+
+	if !running {
+		if err := startContainer("perses", "persesdev/perses", port, "8080"); err != nil {
+			return fmt.Errorf("failed to start Perses container: %v", err)
+		}
+		fmt.Printf("Waiting for Perses to start...\n")
+		time.Sleep(*waitTime)
+	}
+
+	fmt.Printf("Perses container ready on port %s\n", port)
 	return nil
 }
 
@@ -192,7 +231,7 @@ func migrateDashboard(inputFile, port string) error {
 	if err := json.NewDecoder(resp.Body).Decode(&importResponse); err != nil {
 		return fmt.Errorf("failed to decode import response: %v", err)
 	}
-	
+
 	fmt.Printf("  → Import response status: %s\n", importResponse["status"])
 
 	// Get the dashboard info from import response
@@ -233,14 +272,6 @@ func exportDashboards(outputDir, port, inputDir string) error {
 	}
 
 	fmt.Printf("Found %d dashboards to export\n", len(dashboards))
-	
-	// Log all found dashboards for debugging
-	fmt.Printf("Dashboards found in path %s:\n", inputDir)
-	for i, dashboard := range dashboards {
-		if dashboard["type"] == "dash-db" {
-			fmt.Printf("  [%d] Title: %v, UID: %v\n", i+1, dashboard["title"], dashboard["uid"])
-		}
-	}
 
 	fmt.Printf("\nExporting the dashboards to path %s:\n", outputDir)
 	exportCount := 0
@@ -254,7 +285,7 @@ func exportDashboards(outputDir, port, inputDir string) error {
 				continue
 			}
 
-			fmt.Printf("  [%d] Exporting Title: %v, UID: %v\n", dashboardIndex, dashboard["title"], uid)
+			fmt.Printf("  [%d] Title: %v, UID: %v\n", dashboardIndex, dashboard["title"], uid)
 			if err := exportDashboard(uid, outputDir, port); err != nil {
 				log.Printf("Warning: Failed to export dashboard %s: %v", uid, err)
 				continue
@@ -262,7 +293,7 @@ func exportDashboards(outputDir, port, inputDir string) error {
 			exportCount++
 		}
 	}
-	
+
 	fmt.Printf("Successfully exported %d dashboards\n", exportCount)
 
 	return nil
