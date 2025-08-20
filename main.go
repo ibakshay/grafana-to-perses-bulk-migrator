@@ -18,15 +18,14 @@ import (
 	"time"
 )
 
-const persesVersion = "0.52.0-beta.3"
-
 var (
-	inputDir    = flag.String("input-dir", "", "Absolute path to input directory containing Plutono dashboard JSON files to migrate (required)")
-	outputDir   = flag.String("output-dir", "", "Absolute path to output directory for migrated files (default: <input-dir>/.migrated)")
-	cleanUp     = flag.Bool("cleanup", true, "Cleanup Grafana container after migration (default: false)")
-	grafanaPort = flag.String("port", "3000", "Port for Grafana container")
-	waitTime    = flag.Duration("wait", 10*time.Second, "Time to wait for Grafana to start (default: 10s)")
-	help        = flag.Bool("help", false, "Show help message")
+	inputDir      = flag.String("input-dir", "", "Absolute path to input directory containing Plutono dashboard JSON files to migrate (required)")
+	outputDir     = flag.String("output-dir", "", "Absolute path to output directory for migrated files (default: <input-dir>/.migrated)")
+	cleanUp       = flag.Bool("cleanup", false, "Cleanup Grafana container after migration (default: false)")
+	grafanaPort   = flag.String("port", "3000", "Port for Grafana container")
+	waitTime      = flag.Duration("wait", 10*time.Second, "Time to wait for Grafana to start (default: 10s)")
+	persesVersion = flag.String("perses-version", "0.52.0-beta.3", "Version of percli to download (default: 0.52.0-beta.3)")
+	help          = flag.Bool("help", false, "Show help message")
 )
 
 func main() {
@@ -323,7 +322,7 @@ func downloadPercli() error {
 	}
 
 	// Construct download URL
-	downloadURL := fmt.Sprintf("https://github.com/perses/perses/releases/download/v%s/perses_%s_%s_%s.tar.gz", persesVersion, persesVersion, osName, arch)
+	downloadURL := fmt.Sprintf("https://github.com/perses/perses/releases/download/v%s/perses_%s_%s_%s.tar.gz", *persesVersion, *persesVersion, osName, arch)
 
 	// Download the tar.gz file
 	resp, err := http.Get(downloadURL)
