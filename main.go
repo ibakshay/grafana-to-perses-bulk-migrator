@@ -76,7 +76,7 @@ func main() {
 
 	fmt.Printf("✓ Schema update completed\n\n")
 
-	grafanaOutputDir := filepath.Join(*outputDir, "grafana")
+	grafanaOutputDir := filepath.Join(*outputDir, "grafana-schema-current")
 	if err := exportUpdatedGrafanaDashboards(grafanaOutputDir, *grafanaPort); err != nil {
 		log.Printf("Warning: Failed to export dashboards: %v", err)
 	}
@@ -90,7 +90,7 @@ func main() {
 		log.Fatalf("Failed to login to Perses: %v", err)
 	}
 
-	fmt.Println("\nMigrating dashboards to Perses format...")
+	fmt.Println("\nMigrating Grafana dashboards to Perses Schema format...")
 	persesOutputDir := filepath.Join(*outputDir, "perses")
 	if err := migrateDashboardsToPerses(grafanaOutputDir, persesOutputDir); err != nil {
 		log.Printf("Warning: Failed to migrate dashboards to Perses: %v", err)
@@ -467,10 +467,9 @@ func loginPercli() error {
 		return fmt.Errorf("percli binary not found at %s", binPath)
 	}
 
-	fmt.Println("Logging into Perses...")
-
 	// Construct login URL with dynamic port
 	loginURL := fmt.Sprintf("http://localhost:%s", *persesPort)
+	fmt.Printf("Logging into Perses at %s...\n", loginURL)
 
 	// Run percli login command
 	cmd := exec.Command(binPath, "login", loginURL, "-u", "admin", "-p", "password")
