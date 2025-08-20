@@ -60,6 +60,12 @@ func main() {
 
 	fmt.Printf("Dashboard import completed. All dashboards are now in Grafana.\n")
 
+	if err := exportDashboards(*outputDir, *grafanaPort); err != nil {
+		log.Printf("Warning: Failed to export dashboards: %v", err)
+	} else {
+		fmt.Printf("Dashboard export completed. Updated dashboards saved to %s\n", *outputDir)
+	}
+
 	if *cleanUp {
 		if err := stopGrafanaContainer(*grafanaPort); err != nil {
 			log.Printf("Warning: Failed to cleanup Grafana container: %v", err)
@@ -183,5 +189,98 @@ func migrateDashboard(inputFile, port string) error {
 	}
 
 	fmt.Printf("  → Imported dashboard: ID=%d, UID=%s\n", int(dashboardID), dashboardUID)
+	return nil
+}
+
+func exportDashboards(outputDir, port string) error {
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return fmt.Errorf("failed to create output directory: %v", err)
+	}
+
+	searchURL := fmt.Sprintf("http://admin:admin@localhost:%s/api/search?query=", port)
+	resp, err := http.Get(searchURL)
+	if err != nil {
+		return fmt.Errorf("failed to search dashboards: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("search failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var dashboards []map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&dashboards); err != nil {
+		return fmt.Errorf("failed to decode dashboard list: %v", err)
+	}
+
+	fmt.Printf("Found %d dashboards to export\n", len(dashboards))
+
+	for _, dashboard := range dashboards {
+		if dashboard["type"] == "dash-db" {
+			uid, ok := dashboard["uid"].(string)
+			if !ok {
+				log.Printf("Warning: Dashboard missing UID, skipping")
+				continue
+			}
+
+			if err := exportDashboard(uid, outputDir, port); err != nil {
+				log.Printf("Warning: Failed to export dashboard %s: %v", uid, err)
+				continue
+			}
+		}
+	}
+
+	return nil
+}
+
+func exportDashboard(uid, outputDir, port string) error {
+	dashboardURL := fmt.Sprintf("http://admin:admin@localhost:%s/api/dashboards/uid/%s", port, uid)
+	resp, err := http.Get(dashboardURL)
+	if err != nil {
+		return fmt.Errorf("failed to get dashboard: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("dashboard fetch failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var dashboardResponse map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&dashboardResponse); err != nil {
+		return fmt.Errorf("failed to decode dashboard response: %v", err)
+	}
+
+	meta, ok := dashboardResponse["meta"].(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("no meta found in dashboard response")
+	}
+
+	slug, ok := meta["slug"].(string)
+	if !ok {
+		slug = uid
+	}
+
+	// Extract only the dashboard content (not the full API response)
+	dashboard, ok := dashboardResponse["dashboard"].(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("no dashboard found in response")
+	}
+
+	timestamp := time.Now().Format("20060102_1504")
+	filename := fmt.Sprintf("%s_%s.json", slug, timestamp)
+	filepath := filepath.Join(outputDir, filename)
+
+	dashboardBytes, err := json.MarshalIndent(dashboard, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal dashboard: %v", err)
+	}
+
+	if err := os.WriteFile(filepath, dashboardBytes, 0644); err != nil {
+		return fmt.Errorf("failed to write dashboard file: %v", err)
+	}
+
+	fmt.Printf("  → Exported dashboard: %s\n", filename)
 	return nil
 }
