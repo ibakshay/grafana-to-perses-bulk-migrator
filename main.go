@@ -77,10 +77,10 @@ func main() {
 	}
 
 	if *cleanUp {
-		if err := stopGrafanaContainer(*grafanaPort); err != nil {
-			log.Printf("Warning: Failed to cleanup Grafana container: %v", err)
+		if err := deleteGrafanaContainer(*grafanaPort); err != nil {
+			log.Printf("Warning: Failed to delete Grafana container: %v", err)
 		} else {
-			fmt.Println("Grafana container cleaned up successfully")
+			fmt.Println("Grafana container deleted successfully")
 		}
 	}
 }
@@ -102,7 +102,7 @@ func isGrafanaContainerRunning(port string) (bool, error) {
 	return len(output) > 0, nil
 }
 
-func stopGrafanaContainer(port string) error {
+func deleteGrafanaContainer(port string) error {
 	cmd := exec.Command("docker", "ps", "--filter", fmt.Sprintf("publish=%s", port), "--format", "{{.ID}}")
 	output, err := cmd.Output()
 	if err != nil {
@@ -111,8 +111,8 @@ func stopGrafanaContainer(port string) error {
 
 	if len(output) > 0 {
 		containerID := strings.TrimSpace(string(output))
-		stopCmd := exec.Command("docker", "stop", containerID)
-		return stopCmd.Run()
+		deleteCmd := exec.Command("docker", "rm", "-f", containerID)
+		return deleteCmd.Run()
 	}
 
 	return nil
