@@ -65,7 +65,7 @@ func main() {
 
 	fmt.Printf("Dashboard import completed. All dashboards are now in Grafana.\n")
 
-	if err := exportDashboards(*outputDir, *grafanaPort); err != nil {
+	if err := exportDashboards(*outputDir, *grafanaPort, *inputDir); err != nil {
 		log.Printf("Warning: Failed to export dashboards: %v", err)
 	} else {
 		fmt.Printf("Dashboard export completed. Updated dashboards saved to %s\n", *outputDir)
@@ -130,6 +130,7 @@ func migrateDashboards(inputDir, port string) error {
 	fmt.Printf("Found %d JSON files to import\n", len(files))
 
 	for _, file := range files {
+		fmt.Printf("Processing file: %s\n", file)
 		fmt.Printf("Importing: %s\n", filepath.Base(file))
 
 		if err := migrateDashboard(file, port); err != nil {
@@ -153,6 +154,12 @@ func migrateDashboard(inputFile, port string) error {
 	if err := json.Unmarshal(dashboardData, &dashboard); err != nil {
 		return fmt.Errorf("failed to parse dashboard JSON: %v", err)
 	}
+
+	// Log original dashboard info
+	originalID := dashboard["id"]
+	originalUID := dashboard["uid"]
+	title := dashboard["title"]
+	fmt.Printf("  → Dashboard title: %v, original ID: %v, original UID: %v\n", title, originalID, originalUID)
 
 	// Remove ID and UID to allow Grafana to assign new ones
 	delete(dashboard, "id")
@@ -185,6 +192,8 @@ func migrateDashboard(inputFile, port string) error {
 	if err := json.NewDecoder(resp.Body).Decode(&importResponse); err != nil {
 		return fmt.Errorf("failed to decode import response: %v", err)
 	}
+	
+	fmt.Printf("  → Import response status: %s\n", importResponse["status"])
 
 	// Get the dashboard info from import response
 	dashboardUID, ok := importResponse["uid"].(string)
@@ -201,7 +210,7 @@ func migrateDashboard(inputFile, port string) error {
 	return nil
 }
 
-func exportDashboards(outputDir, port string) error {
+func exportDashboards(outputDir, port, inputDir string) error {
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create output directory: %v", err)
 	}
@@ -224,21 +233,37 @@ func exportDashboards(outputDir, port string) error {
 	}
 
 	fmt.Printf("Found %d dashboards to export\n", len(dashboards))
+	
+	// Log all found dashboards for debugging
+	fmt.Printf("Dashboards found in path %s:\n", inputDir)
+	for i, dashboard := range dashboards {
+		if dashboard["type"] == "dash-db" {
+			fmt.Printf("  [%d] Title: %v, UID: %v\n", i+1, dashboard["title"], dashboard["uid"])
+		}
+	}
 
+	fmt.Printf("\nExporting the dashboards to path %s:\n", outputDir)
+	exportCount := 0
+	dashboardIndex := 0
 	for _, dashboard := range dashboards {
 		if dashboard["type"] == "dash-db" {
+			dashboardIndex++
 			uid, ok := dashboard["uid"].(string)
 			if !ok {
-				log.Printf("Warning: Dashboard missing UID, skipping")
+				log.Printf("Warning: Dashboard missing UID, skipping: %v", dashboard["title"])
 				continue
 			}
 
+			fmt.Printf("  [%d] Exporting Title: %v, UID: %v\n", dashboardIndex, dashboard["title"], uid)
 			if err := exportDashboard(uid, outputDir, port); err != nil {
 				log.Printf("Warning: Failed to export dashboard %s: %v", uid, err)
 				continue
 			}
+			exportCount++
 		}
 	}
+	
+	fmt.Printf("Successfully exported %d dashboards\n", exportCount)
 
 	return nil
 }
