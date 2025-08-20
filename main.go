@@ -16,8 +16,8 @@ import (
 )
 
 var (
-	inputDir    = flag.String("dir", "", "Absolute path to directory containing Plutono dashboard JSON files to migrate (required)")
-	outputDir   = flag.String("output", "", "Absolute path to output directory for migrated files (default: <input-dir>/.migrated)")
+	inputDir    = flag.String("input-dir", "", "Absolute path to input directory containing Plutono dashboard JSON files to migrate (required)")
+	outputDir   = flag.String("output-dir", "", "Absolute path to output directory for migrated files (default: <input-dir>/.migrated)")
 	cleanUp     = flag.Bool("cleanup", true, "Cleanup Grafana container after migration (default: false)")
 	grafanaPort = flag.String("port", "3000", "Port for Grafana container")
 	waitTime    = flag.Duration("wait", 10*time.Second, "Time to wait for Grafana to start (default: 10s)")
@@ -33,7 +33,7 @@ func main() {
 	}
 
 	if *inputDir == "" {
-		log.Fatal("Input directory is required. Use -dir flag with absolute path.")
+		log.Fatal("Input directory is required. Use --input-dir flag with absolute path.")
 	}
 
 	if *outputDir == "" {
