@@ -533,6 +533,6 @@ func migrateDashboardsToPerses(grafanaOutputDir, persesOutputDir string) error {
 		migratedCount++
 	}
 
-	fmt.Printf("Successfully migrated %d/%d dashboards to Perses format\n", migratedCount, len(files))
+	fmt.Printf("Successfully migrated %d/%d dashboards to Perses Schema format\n", migratedCount, len(files))
 	return nil
 }
