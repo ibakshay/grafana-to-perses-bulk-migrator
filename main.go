@@ -316,6 +316,13 @@ func exportSingleUpdatedDashboard(uid, outputDir, port string) error {
 		return fmt.Errorf("no spec found in dashboard response")
 	}
 
+	// Add uid field at root level for Perses dashboard name generation
+	if title, ok := spec["title"].(string); ok && title != "" {
+		spec["uid"] = title
+	} else {
+		spec["uid"] = uid
+	}
+
 	// Use the UID as the base filename
 	slug := uid
 	if title, ok := spec["title"].(string); ok && title != "" {
