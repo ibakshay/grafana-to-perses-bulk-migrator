@@ -21,7 +21,7 @@ import (
 var (
 	inputDir      = flag.String("input-dir", "", "Absolute path to input directory containing Plutono dashboard JSON files to migrate (required)")
 	outputDir     = flag.String("output-dir", "", "Absolute path to output directory for migrated files (default: <input-dir>/.migrated)")
-	cleanUp       = flag.Bool("cleanup", false, "Cleanup containers after migration (default: false)")
+	cleanUp       = flag.Bool("cleanup", true, "Cleanup containers after migration (default: false)")
 	grafanaPort   = flag.String("grafana-port", "3000", "Port for Grafana container")
 	persesPort    = flag.String("perses-port", "8080", "Port for Perses container")
 	waitTime      = flag.Duration("wait", 10*time.Second, "Time to wait for containers to start (default: 10s)")
@@ -77,7 +77,7 @@ func main() {
 
 	fmt.Printf("✓ Schema update completed\n\n")
 
-	grafanaOutputDir := filepath.Join(*outputDir, "grafana-schema-current")
+	grafanaOutputDir := filepath.Join(*outputDir, "grafana-schema-latest")
 	if err := exportUpdatedGrafanaDashboards(dashboardUIDs, grafanaOutputDir, *grafanaPort); err != nil {
 		log.Printf("Warning: Failed to export dashboards: %v", err)
 	}
@@ -317,11 +317,8 @@ func exportSingleUpdatedDashboard(uid, outputDir, port string) error {
 	}
 
 	// Add uid field at root level for Perses dashboard name generation
-	if title, ok := spec["title"].(string); ok && title != "" {
-		spec["uid"] = title
-	} else {
-		spec["uid"] = uid
-	}
+	// Use the original UID which already follows the correct format
+	spec["uid"] = uid
 
 	// Use the UID as the base filename
 	slug := uid
@@ -506,8 +503,15 @@ func migrateDashboardsToPerses(grafanaOutputDir, persesOutputDir string) error {
 			continue
 		}
 
+		// Clean up datasource references to use default datasource
+		cleanedOutput, err := removeDatasourceNames(output)
+		if err != nil {
+			log.Printf("Warning: Failed to clean datasource references in %s: %v", filepath.Base(file), err)
+			cleanedOutput = output // Use original output if cleanup fails
+		}
+
 		// Save the migrated dashboard to perses output directory
-		if err := os.WriteFile(outputFile, output, 0644); err != nil {
+		if err := os.WriteFile(outputFile, cleanedOutput, 0644); err != nil {
 			log.Printf("Warning: Failed to save migrated dashboard %s: %v", filepath.Base(file), err)
 			continue
 		}
@@ -518,4 +522,42 @@ func migrateDashboardsToPerses(grafanaOutputDir, persesOutputDir string) error {
 
 	fmt.Printf("Successfully migrated %d/%d dashboards to Perses Schema format\n", migratedCount, len(files))
 	return nil
+}
+
+func removeDatasourceNames(jsonData []byte) ([]byte, error) {
+	var dashboard map[string]any
+	if err := json.Unmarshal(jsonData, &dashboard); err != nil {
+		return nil, err
+	}
+
+	// Navigate directly to spec.panels
+	if spec, ok := dashboard["spec"].(map[string]any); ok {
+		if panels, ok := spec["panels"].(map[string]any); ok {
+			for _, panel := range panels {
+				if panelMap, ok := panel.(map[string]any); ok {
+					if panelSpec, ok := panelMap["spec"].(map[string]any); ok {
+						if queries, ok := panelSpec["queries"].([]any); ok {
+							for _, query := range queries {
+								if queryMap, ok := query.(map[string]any); ok {
+									if querySpec, ok := queryMap["spec"].(map[string]any); ok {
+										if plugin, ok := querySpec["plugin"].(map[string]any); ok {
+											if pluginSpec, ok := plugin["spec"].(map[string]any); ok {
+												if datasource, ok := pluginSpec["datasource"].(map[string]any); ok {
+													if kind, hasKind := datasource["kind"]; hasKind {
+														pluginSpec["datasource"] = map[string]any{"kind": kind}
+													}
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return json.MarshalIndent(dashboard, "", "  ")
 }
