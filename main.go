@@ -70,7 +70,7 @@ func main() {
 		log.Fatalf("Failed to setup Perses container: %v", err)
 	}
 
-	dashboardUIDs, err := updateGrafanaSchemas(*inputDir, *grafanaPort)
+	dashboardUIDs, err := updateGrafanaSchemasToLatestVersion(*inputDir, *grafanaPort)
 	if err != nil {
 		log.Fatalf("Import failed: %v", err)
 	}
@@ -170,7 +170,7 @@ func startPersesContainer(port string) error {
 	return nil
 }
 
-func updateGrafanaSchemas(inputDir, port string) ([]string, error) {
+func updateGrafanaSchemasToLatestVersion(inputDir, port string) ([]string, error) {
 	files, err := filepath.Glob(filepath.Join(inputDir, "*.json"))
 	if err != nil {
 		return nil, fmt.Errorf("failed to find JSON files: %v", err)
