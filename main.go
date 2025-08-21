@@ -19,16 +19,16 @@ import (
 )
 
 var (
-	inputDir      = flag.String("input-dir", "", "Absolute path to input directory containing Plutono dashboard JSON files to migrate (required)")
-	outputDir     = flag.String("output-dir", "", "Absolute path to output directory for migrated files (default: <input-dir>/.migrated)")
-	cleanUp       = flag.Bool("cleanup", true, "Cleanup containers after migration (default: false)")
-	grafanaPort   = flag.String("grafana-port", "3000", "Port for Grafana container")
-	persesPort    = flag.String("perses-port", "8080", "Port for Perses container")
-	waitTime      = flag.Duration("wait", 10*time.Second, "Time to wait for containers to start (default: 10s)")
-	persesVersion = flag.String("perses-version", "0.52.0-beta.3", "Version of percli to download (default: 0.52.0-beta.3)")
-	recursive     = flag.Bool("recursive", false, "Process JSON files recursively in subdirectories (default: false)")
+	inputDir                   = flag.String("input-dir", "", "Absolute path to input directory containing Plutono dashboard JSON files to migrate (required)")
+	outputDir                  = flag.String("output-dir", "", "Absolute path to output directory for migrated files (default: <input-dir>/.migrated)")
+	cleanUp                    = flag.Bool("cleanup", true, "Cleanup containers after migration (default: false)")
+	grafanaPort                = flag.String("grafana-port", "3000", "Port for Grafana container")
+	persesPort                 = flag.String("perses-port", "8080", "Port for Perses container")
+	waitTime                   = flag.Duration("wait", 10*time.Second, "Time to wait for containers to start (default: 10s)")
+	persesVersion              = flag.String("perses-version", "0.52.0-beta.3", "Version of percli to download (default: 0.52.0-beta.3)")
+	recursive                  = flag.Bool("recursive", false, "Process JSON files recursively in subdirectories (default: false)")
 	useDefaultPersesDatasource = flag.Bool("use-default-perses-datasource", true, "Remove datasource names to use default Perses datasource (default: true)")
-	help          = flag.Bool("help", false, "Show help message")
+	help                       = flag.Bool("help", false, "Show help message")
 )
 
 type DashboardInfo struct {
@@ -576,14 +576,14 @@ func migrateDashboardsToPerses(grafanaOutputDir, persesOutputDir string, summary
 	}
 
 	fmt.Printf("Found %d Grafana dashboards to migrate to Perses\n", len(files))
-	
+
 	// Show datasource handling strategy
 	if *useDefaultPersesDatasource {
 		fmt.Printf("Datasource strategy: Removing datasource names to use default Perses datasource\n")
 	} else {
 		fmt.Printf("Datasource strategy: Preserving original datasource names\n")
 	}
-	
+
 	fmt.Printf("\nMigrating dashboards to Perses Schema format:\n")
 
 	migratedCount := 0
