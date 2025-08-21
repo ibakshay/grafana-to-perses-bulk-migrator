@@ -70,14 +70,15 @@ func main() {
 		log.Fatalf("Failed to setup Perses container: %v", err)
 	}
 
-	if err := updateGrafanaSchemas(*inputDir, *grafanaPort); err != nil {
+	dashboardUIDs, err := updateGrafanaSchemas(*inputDir, *grafanaPort)
+	if err != nil {
 		log.Fatalf("Import failed: %v", err)
 	}
 
 	fmt.Printf("✓ Schema update completed\n\n")
 
 	grafanaOutputDir := filepath.Join(*outputDir, "grafana-schema-current")
-	if err := exportUpdatedGrafanaDashboards(grafanaOutputDir, *grafanaPort); err != nil {
+	if err := exportUpdatedGrafanaDashboards(dashboardUIDs, grafanaOutputDir, *grafanaPort); err != nil {
 		log.Printf("Warning: Failed to export dashboards: %v", err)
 	}
 
@@ -169,43 +170,46 @@ func startPersesContainer(port string) error {
 	return nil
 }
 
-func updateGrafanaSchemas(inputDir, port string) error {
+func updateGrafanaSchemas(inputDir, port string) ([]string, error) {
 	files, err := filepath.Glob(filepath.Join(inputDir, "*.json"))
 	if err != nil {
-		return fmt.Errorf("failed to find JSON files: %v", err)
+		return nil, fmt.Errorf("failed to find JSON files: %v", err)
 	}
 
 	if len(files) == 0 {
-		return fmt.Errorf("no JSON files found in directory: %s", inputDir)
+		return nil, fmt.Errorf("no JSON files found in directory: %s", inputDir)
 	}
 
 	fmt.Printf("Updating schemas for %d dashboards...\n", len(files))
 
+	var dashboardUIDs []string
 	for _, file := range files {
 		fmt.Printf("Processing file: %s\n", file)
 		fmt.Printf("Importing: %s\n", filepath.Base(file))
-		if err := importDashboardToGrafana(file, port); err != nil {
+		uid, err := importDashboardToGrafana(file, port)
+		if err != nil {
 			log.Printf("Warning: Failed to import %s: %v", filepath.Base(file), err)
 			continue
 		}
 
 		fmt.Printf("Successfully imported: %s\n", filepath.Base(file))
+		dashboardUIDs = append(dashboardUIDs, uid)
 	}
 
-	return nil
+	return dashboardUIDs, nil
 }
 
-func importDashboardToGrafana(inputFile, port string) error {
+func importDashboardToGrafana(inputFile, port string) (string, error) {
 	// Import dashboard into Grafana to automatically update its schema to the latest version
 	// Grafana normalizes the dashboard format on import, ensuring compatibility with Perses migration
 	dashboardData, err := os.ReadFile(inputFile)
 	if err != nil {
-		return fmt.Errorf("failed to read dashboard file: %v", err)
+		return "", fmt.Errorf("failed to read dashboard file: %v", err)
 	}
 
 	var dashboard map[string]interface{}
 	if err := json.Unmarshal(dashboardData, &dashboard); err != nil {
-		return fmt.Errorf("failed to parse dashboard JSON: %v", err)
+		return "", fmt.Errorf("failed to parse dashboard JSON: %v", err)
 	}
 
 	// Log original dashboard info
@@ -226,24 +230,24 @@ func importDashboardToGrafana(inputFile, port string) error {
 
 	payloadBytes, err := json.Marshal(importPayload)
 	if err != nil {
-		return fmt.Errorf("failed to marshal import payload: %v", err)
+		return "", fmt.Errorf("failed to marshal import payload: %v", err)
 	}
 
 	importURL := fmt.Sprintf("http://admin:admin@localhost:%s/api/dashboards/db", port)
 	resp, err := http.Post(importURL, "application/json", bytes.NewReader(payloadBytes))
 	if err != nil {
-		return fmt.Errorf("failed to import dashboard: %v", err)
+		return "", fmt.Errorf("failed to import dashboard: %v", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("import failed with status %d: %s", resp.StatusCode, string(body))
+		return "", fmt.Errorf("import failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
 	var importResponse map[string]interface{}
 	if err := json.NewDecoder(resp.Body).Decode(&importResponse); err != nil {
-		return fmt.Errorf("failed to decode import response: %v", err)
+		return "", fmt.Errorf("failed to decode import response: %v", err)
 	}
 
 	fmt.Printf("  → Import response status: %s\n", importResponse["status"])
@@ -251,63 +255,36 @@ func importDashboardToGrafana(inputFile, port string) error {
 	// Get the dashboard info from import response
 	dashboardUID, ok := importResponse["uid"].(string)
 	if !ok {
-		return fmt.Errorf("no UID found in import response")
+		return "", fmt.Errorf("no UID found in import response")
 	}
 
 	dashboardID, ok := importResponse["id"].(float64)
 	if !ok {
-		return fmt.Errorf("no ID found in import response")
+		return "", fmt.Errorf("no ID found in import response")
 	}
 
 	fmt.Printf("  → Imported dashboard: ID=%d, UID=%s\n", int(dashboardID), dashboardUID)
-	return nil
+	return dashboardUID, nil
 }
 
-func exportUpdatedGrafanaDashboards(outputDir, port string) error {
-	// Export dashboards from Grafana after they've been imported and schema-normalized
+func exportUpdatedGrafanaDashboards(dashboardUIDs []string, outputDir, port string) error {
+	// Export dashboards from Grafana using collected UIDs from import process
 	// This gives us the latest Grafana schema format required for successful Perses migration
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create output directory: %v", err)
 	}
 
-	searchURL := fmt.Sprintf("http://admin:admin@localhost:%s/api/search?query=", port)
-	resp, err := http.Get(searchURL)
-	if err != nil {
-		return fmt.Errorf("failed to search dashboards: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("search failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var dashboards []map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&dashboards); err != nil {
-		return fmt.Errorf("failed to decode dashboard list: %v", err)
-	}
-
-	fmt.Printf("Found %d dashboards to export\n", len(dashboards))
+	fmt.Printf("Found %d dashboards to export\n", len(dashboardUIDs))
 
 	fmt.Printf("\nExporting dashboards with updated schemas to path %s:\n This is necessary because Perses migration requires the latest Grafana schema format. \n", outputDir)
 	exportCount := 0
-	dashboardIndex := 0
-	for _, dashboard := range dashboards {
-		if dashboard["type"] == "dash-db" {
-			dashboardIndex++
-			uid, ok := dashboard["uid"].(string)
-			if !ok {
-				log.Printf("Warning: Dashboard missing UID, skipping: %v", dashboard["title"])
-				continue
-			}
-
-			fmt.Printf("  [%d] Title: %v, UID: %v\n", dashboardIndex, dashboard["title"], uid)
-			if err := exportSingleUpdatedDashboard(uid, outputDir, port); err != nil {
-				log.Printf("Warning: Failed to export dashboard %s: %v", uid, err)
-				continue
-			}
-			exportCount++
+	for i, uid := range dashboardUIDs {
+		fmt.Printf("  [%d] UID: %s\n", i+1, uid)
+		if err := exportSingleUpdatedDashboard(uid, outputDir, port); err != nil {
+			log.Printf("Warning: Failed to export dashboard %s: %v", uid, err)
+			continue
 		}
+		exportCount++
 	}
 
 	fmt.Printf("Successfully exported %d dashboards\n", exportCount)
@@ -316,7 +293,7 @@ func exportUpdatedGrafanaDashboards(outputDir, port string) error {
 }
 
 func exportSingleUpdatedDashboard(uid, outputDir, port string) error {
-	dashboardURL := fmt.Sprintf("http://admin:admin@localhost:%s/api/dashboards/uid/%s", port, uid)
+	dashboardURL := fmt.Sprintf("http://admin:admin@localhost:%s/apis/dashboard.grafana.app/v1beta1/namespaces/default/dashboards/%s", port, uid)
 	resp, err := http.Get(dashboardURL)
 	if err != nil {
 		return fmt.Errorf("failed to get dashboard: %v", err)
@@ -333,27 +310,26 @@ func exportSingleUpdatedDashboard(uid, outputDir, port string) error {
 		return fmt.Errorf("failed to decode dashboard response: %v", err)
 	}
 
-	meta, ok := dashboardResponse["meta"].(map[string]interface{})
+	// Extract spec which contains the dashboard definition
+	spec, ok := dashboardResponse["spec"].(map[string]interface{})
 	if !ok {
-		return fmt.Errorf("no meta found in dashboard response")
+		return fmt.Errorf("no spec found in dashboard response")
 	}
 
-	slug, ok := meta["slug"].(string)
-	if !ok {
-		slug = uid
-	}
-
-	// Extract only the dashboard content (not the full API response)
-	dashboard, ok := dashboardResponse["dashboard"].(map[string]interface{})
-	if !ok {
-		return fmt.Errorf("no dashboard found in response")
+	// Use the UID as the base filename
+	slug := uid
+	if title, ok := spec["title"].(string); ok && title != "" {
+		// Clean the title to make it filename-safe
+		slug = strings.ReplaceAll(title, " ", "_")
+		slug = strings.ReplaceAll(slug, "/", "_")
 	}
 
 	timestamp := time.Now().Format("20060102_1504")
 	filename := fmt.Sprintf("%s_%s.json", slug, timestamp)
 	filepath := filepath.Join(outputDir, filename)
 
-	dashboardBytes, err := json.MarshalIndent(dashboard, "", "  ")
+	// Export the spec (dashboard definition) as JSON
+	dashboardBytes, err := json.MarshalIndent(spec, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal dashboard: %v", err)
 	}
