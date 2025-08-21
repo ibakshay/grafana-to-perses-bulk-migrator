@@ -33,7 +33,7 @@ changelog:
   use: github
 
 release:
-  draft: true
+  draft: false
   prerelease: auto
   name_template: "{{.Version}}"
   footer: >-
