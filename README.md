@@ -148,16 +148,6 @@ The tool performs the following steps automatically:
 - Verify the specified Perses version exists
 - Check GitHub API rate limits
 
-### Container Cleanup
-
-If containers are left running after migration:
-
-```bash
-# Use Docker directly
-docker rm -f $(docker ps -q --filter "name=grafana")
-docker rm -f $(docker ps -q --filter "name=perses")
-```
-
 ## Migration Summary
 
 The tool provides a detailed summary showing:
