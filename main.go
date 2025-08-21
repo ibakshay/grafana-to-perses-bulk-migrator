@@ -26,8 +26,14 @@ var (
 	persesPort    = flag.String("perses-port", "8080", "Port for Perses container")
 	waitTime      = flag.Duration("wait", 10*time.Second, "Time to wait for containers to start (default: 10s)")
 	persesVersion = flag.String("perses-version", "0.52.0-beta.3", "Version of percli to download (default: 0.52.0-beta.3)")
+	recursive     = flag.Bool("recursive", false, "Process JSON files recursively in subdirectories (default: false)")
 	help          = flag.Bool("help", false, "Show help message")
 )
+
+type DashboardInfo struct {
+	UID          string
+	RelativePath string // relative path from input directory
+}
 
 func main() {
 	flag.Parse()
@@ -70,7 +76,7 @@ func main() {
 		log.Fatalf("Failed to setup Perses container: %v", err)
 	}
 
-	dashboardUIDs, err := updateGrafanaSchemasToLatestVersion(*inputDir, *grafanaPort)
+	dashboards, err := updateGrafanaSchemasToLatestVersion(*inputDir, *grafanaPort)
 	if err != nil {
 		log.Fatalf("Import failed: %v", err)
 	}
@@ -78,7 +84,7 @@ func main() {
 	fmt.Printf("✓ Schema update completed\n\n")
 
 	grafanaOutputDir := filepath.Join(*outputDir, "grafana-schema-latest")
-	if err := exportUpdatedGrafanaDashboards(dashboardUIDs, grafanaOutputDir, *grafanaPort); err != nil {
+	if err := exportUpdatedGrafanaDashboards(dashboards, grafanaOutputDir, *grafanaPort); err != nil {
 		log.Printf("Warning: Failed to export dashboards: %v", err)
 	}
 
@@ -170,8 +176,37 @@ func startPersesContainer(port string) error {
 	return nil
 }
 
-func updateGrafanaSchemasToLatestVersion(inputDir, port string) ([]string, error) {
-	files, err := filepath.Glob(filepath.Join(inputDir, "*.json"))
+func collectJSONFiles(inputDir string) ([]string, error) {
+	var files []string
+
+	if *recursive {
+		// Recursive mode: walk through all subdirectories
+		err := filepath.Walk(inputDir, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if !info.IsDir() && strings.HasSuffix(strings.ToLower(info.Name()), ".json") {
+				files = append(files, path)
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		// Non-recursive mode: only root directory (existing behavior)
+		globFiles, err := filepath.Glob(filepath.Join(inputDir, "*.json"))
+		if err != nil {
+			return nil, err
+		}
+		files = globFiles
+	}
+
+	return files, nil
+}
+
+func updateGrafanaSchemasToLatestVersion(inputDir, port string) ([]DashboardInfo, error) {
+	files, err := collectJSONFiles(inputDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find JSON files: %v", err)
 	}
@@ -182,8 +217,14 @@ func updateGrafanaSchemasToLatestVersion(inputDir, port string) ([]string, error
 
 	fmt.Printf("Updating schemas for %d dashboards...\n", len(files))
 
-	var dashboardUIDs []string
+	var dashboards []DashboardInfo
 	for _, file := range files {
+		relPath, err := filepath.Rel(inputDir, file)
+		if err != nil {
+			log.Printf("Warning: Failed to get relative path for %s: %v", file, err)
+			continue
+		}
+
 		fmt.Printf("Processing file: %s\n", file)
 		fmt.Printf("Importing: %s\n", filepath.Base(file))
 		uid, err := importDashboardToGrafana(file, port)
@@ -193,10 +234,13 @@ func updateGrafanaSchemasToLatestVersion(inputDir, port string) ([]string, error
 		}
 
 		fmt.Printf("Successfully imported: %s\n", filepath.Base(file))
-		dashboardUIDs = append(dashboardUIDs, uid)
+		dashboards = append(dashboards, DashboardInfo{
+			UID:          uid,
+			RelativePath: relPath,
+		})
 	}
 
-	return dashboardUIDs, nil
+	return dashboards, nil
 }
 
 func importDashboardToGrafana(inputFile, port string) (string, error) {
@@ -267,21 +311,21 @@ func importDashboardToGrafana(inputFile, port string) (string, error) {
 	return dashboardUID, nil
 }
 
-func exportUpdatedGrafanaDashboards(dashboardUIDs []string, outputDir, port string) error {
+func exportUpdatedGrafanaDashboards(dashboards []DashboardInfo, outputDir, port string) error {
 	// Export dashboards from Grafana using collected UIDs from import process
 	// This gives us the latest Grafana schema format required for successful Perses migration
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create output directory: %v", err)
 	}
 
-	fmt.Printf("Found %d dashboards to export\n", len(dashboardUIDs))
+	fmt.Printf("Found %d dashboards to export\n", len(dashboards))
 
 	fmt.Printf("\nExporting dashboards with updated schemas to path %s:\n This is necessary because Perses migration requires the latest Grafana schema format. \n", outputDir)
 	exportCount := 0
-	for i, uid := range dashboardUIDs {
-		fmt.Printf("  [%d] UID: %s\n", i+1, uid)
-		if err := exportSingleUpdatedDashboard(uid, outputDir, port); err != nil {
-			log.Printf("Warning: Failed to export dashboard %s: %v", uid, err)
+	for i, dashboard := range dashboards {
+		fmt.Printf("  [%d] UID: %s, Path: %s\n", i+1, dashboard.UID, dashboard.RelativePath)
+		if err := exportSingleUpdatedDashboard(dashboard.UID, dashboard.RelativePath, outputDir, port); err != nil {
+			log.Printf("Warning: Failed to export dashboard %s: %v", dashboard.UID, err)
 			continue
 		}
 		exportCount++
@@ -292,7 +336,7 @@ func exportUpdatedGrafanaDashboards(dashboardUIDs []string, outputDir, port stri
 	return nil
 }
 
-func exportSingleUpdatedDashboard(uid, outputDir, port string) error {
+func exportSingleUpdatedDashboard(uid, relativePath, outputDir, port string) error {
 	dashboardURL := fmt.Sprintf("http://admin:admin@localhost:%s/apis/dashboard.grafana.app/v1beta1/namespaces/default/dashboards/%s", port, uid)
 	resp, err := http.Get(dashboardURL)
 	if err != nil {
@@ -320,6 +364,16 @@ func exportSingleUpdatedDashboard(uid, outputDir, port string) error {
 	// Use the original UID which already follows the correct format
 	spec["uid"] = uid
 
+	// Create subdirectory structure based on relative path
+	relativeDir := filepath.Dir(relativePath)
+	targetDir := outputDir
+	if relativeDir != "." {
+		targetDir = filepath.Join(outputDir, relativeDir)
+		if err := os.MkdirAll(targetDir, 0755); err != nil {
+			return fmt.Errorf("failed to create subdirectory: %v", err)
+		}
+	}
+
 	// Use the UID as the base filename
 	slug := uid
 	if title, ok := spec["title"].(string); ok && title != "" {
@@ -330,7 +384,7 @@ func exportSingleUpdatedDashboard(uid, outputDir, port string) error {
 
 	timestamp := time.Now().Format("20060102_1504")
 	filename := fmt.Sprintf("%s_%s.json", slug, timestamp)
-	filepath := filepath.Join(outputDir, filename)
+	outputPath := filepath.Join(targetDir, filename)
 
 	// Export the spec (dashboard definition) as JSON
 	dashboardBytes, err := json.MarshalIndent(spec, "", "  ")
@@ -338,11 +392,16 @@ func exportSingleUpdatedDashboard(uid, outputDir, port string) error {
 		return fmt.Errorf("failed to marshal dashboard: %v", err)
 	}
 
-	if err := os.WriteFile(filepath, dashboardBytes, 0644); err != nil {
+	if err := os.WriteFile(outputPath, dashboardBytes, 0644); err != nil {
 		return fmt.Errorf("failed to write dashboard file: %v", err)
 	}
 
-	fmt.Printf("  → Exported dashboard: %s\n", filename)
+	// Show relative path for better user feedback
+	displayPath := filename
+	if relativeDir != "." {
+		displayPath = filepath.Join(relativeDir, filename)
+	}
+	fmt.Printf("  → Exported dashboard: %s\n", displayPath)
 	return nil
 }
 
@@ -475,8 +534,17 @@ func migrateDashboardsToPerses(grafanaOutputDir, persesOutputDir string) error {
 		return fmt.Errorf("failed to create perses output directory: %v", err)
 	}
 
-	// Find all JSON files in grafana output directory
-	files, err := filepath.Glob(filepath.Join(grafanaOutputDir, "*.json"))
+	// Find all JSON files in grafana output directory recursively
+	var files []string
+	err := filepath.Walk(grafanaOutputDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() && strings.HasSuffix(strings.ToLower(info.Name()), ".json") {
+			files = append(files, path)
+		}
+		return nil
+	})
 	if err != nil {
 		return fmt.Errorf("failed to find JSON files in grafana output directory: %v", err)
 	}
@@ -490,10 +558,24 @@ func migrateDashboardsToPerses(grafanaOutputDir, persesOutputDir string) error {
 
 	migratedCount := 0
 	for i, file := range files {
-		fmt.Printf("  [%d/%d] Migrating: %s\n", i+1, len(files), filepath.Base(file))
+		// Get relative path from grafana output directory
+		relPath, err := filepath.Rel(grafanaOutputDir, file)
+		if err != nil {
+			log.Printf("Warning: Failed to get relative path for %s: %v", file, err)
+			continue
+		}
 
-		// Construct output file path in perses directory
-		outputFile := filepath.Join(persesOutputDir, filepath.Base(file))
+		fmt.Printf("  [%d/%d] Migrating: %s\n", i+1, len(files), relPath)
+
+		// Construct output file path in perses directory maintaining subdirectory structure
+		outputFile := filepath.Join(persesOutputDir, relPath)
+		
+		// Create subdirectory if needed
+		outputDir := filepath.Dir(outputFile)
+		if err := os.MkdirAll(outputDir, 0755); err != nil {
+			log.Printf("Warning: Failed to create output directory %s: %v", outputDir, err)
+			continue
+		}
 
 		// Run percli migrate command
 		cmd := exec.Command(binPath, "migrate", "--online", "-f", file, "-o", "json")
@@ -516,7 +598,7 @@ func migrateDashboardsToPerses(grafanaOutputDir, persesOutputDir string) error {
 			continue
 		}
 
-		fmt.Printf("    → Successfully migrated to: %s\n", filepath.Base(outputFile))
+		fmt.Printf("    → Successfully migrated to: %s\n", relPath)
 		migratedCount++
 	}
 
