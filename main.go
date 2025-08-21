@@ -35,6 +35,16 @@ type DashboardInfo struct {
 	RelativePath string // relative path from input directory
 }
 
+type MigrationSummary struct {
+	TotalDashboards     int
+	SchemaUpdateSuccess int
+	SchemaUpdateFailed  []string
+	ExportSuccess       int
+	ExportFailed        []string
+	MigrationSuccess    int
+	MigrationFailed     []string
+}
+
 func main() {
 	flag.Parse()
 
@@ -76,7 +86,7 @@ func main() {
 		log.Fatalf("Failed to setup Perses container: %v", err)
 	}
 
-	dashboards, err := updateGrafanaSchemasToLatestVersion(*inputDir, *grafanaPort)
+	dashboards, summary, err := updateGrafanaSchemasToLatestVersion(*inputDir, *grafanaPort)
 	if err != nil {
 		log.Fatalf("Import failed: %v", err)
 	}
@@ -84,7 +94,7 @@ func main() {
 	fmt.Printf("✓ Schema update completed\n\n")
 
 	grafanaOutputDir := filepath.Join(*outputDir, "grafana-schema-latest")
-	if err := exportUpdatedGrafanaDashboards(dashboards, grafanaOutputDir, *grafanaPort); err != nil {
+	if err := exportUpdatedGrafanaDashboards(dashboards, grafanaOutputDir, *grafanaPort, summary); err != nil {
 		log.Printf("Warning: Failed to export dashboards: %v", err)
 	}
 
@@ -99,12 +109,15 @@ func main() {
 
 	fmt.Println("\nMigrating Grafana dashboards to Perses Schema format...")
 	persesOutputDir := filepath.Join(*outputDir, "perses")
-	if err := migrateDashboardsToPerses(grafanaOutputDir, persesOutputDir); err != nil {
+	if err := migrateDashboardsToPerses(grafanaOutputDir, persesOutputDir, summary); err != nil {
 		log.Printf("Warning: Failed to migrate dashboards to Perses: %v", err)
-	} else {
-		fmt.Printf("\n🎉 Migration completed!\n")
-		fmt.Printf("📁 Perses dashboards are available at: %s\n", persesOutputDir)
 	}
+
+	// Display migration summary
+	displayMigrationSummary(summary)
+
+	fmt.Printf("\n🎉 Migration completed!\n")
+	fmt.Printf("📁 Perses dashboards are available at: %s\n", persesOutputDir)
 }
 
 func startContainer(name, image, hostPort, containerPort string) error {
@@ -205,17 +218,21 @@ func collectJSONFiles(inputDir string) ([]string, error) {
 	return files, nil
 }
 
-func updateGrafanaSchemasToLatestVersion(inputDir, port string) ([]DashboardInfo, error) {
+func updateGrafanaSchemasToLatestVersion(inputDir, port string) ([]DashboardInfo, *MigrationSummary, error) {
 	files, err := collectJSONFiles(inputDir)
 	if err != nil {
-		return nil, fmt.Errorf("failed to find JSON files: %v", err)
+		return nil, nil, fmt.Errorf("failed to find JSON files: %v", err)
 	}
 
 	if len(files) == 0 {
-		return nil, fmt.Errorf("no JSON files found in directory: %s", inputDir)
+		return nil, nil, fmt.Errorf("no JSON files found in directory: %s", inputDir)
 	}
 
 	fmt.Printf("Updating schemas for %d dashboards...\n", len(files))
+
+	summary := &MigrationSummary{
+		TotalDashboards: len(files),
+	}
 
 	var dashboards []DashboardInfo
 	for _, file := range files {
@@ -230,17 +247,19 @@ func updateGrafanaSchemasToLatestVersion(inputDir, port string) ([]DashboardInfo
 		uid, err := importDashboardToGrafana(file, port)
 		if err != nil {
 			log.Printf("Warning: Failed to import %s: %v", filepath.Base(file), err)
+			summary.SchemaUpdateFailed = append(summary.SchemaUpdateFailed, filepath.Base(file))
 			continue
 		}
 
 		fmt.Printf("Successfully imported: %s\n", filepath.Base(file))
+		summary.SchemaUpdateSuccess++
 		dashboards = append(dashboards, DashboardInfo{
 			UID:          uid,
 			RelativePath: relPath,
 		})
 	}
 
-	return dashboards, nil
+	return dashboards, summary, nil
 }
 
 func importDashboardToGrafana(inputFile, port string) (string, error) {
@@ -311,7 +330,7 @@ func importDashboardToGrafana(inputFile, port string) (string, error) {
 	return dashboardUID, nil
 }
 
-func exportUpdatedGrafanaDashboards(dashboards []DashboardInfo, outputDir, port string) error {
+func exportUpdatedGrafanaDashboards(dashboards []DashboardInfo, outputDir, port string, summary *MigrationSummary) error {
 	// Export dashboards from Grafana using collected UIDs from import process
 	// This gives us the latest Grafana schema format required for successful Perses migration
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
@@ -326,8 +345,10 @@ func exportUpdatedGrafanaDashboards(dashboards []DashboardInfo, outputDir, port 
 		fmt.Printf("  [%d] UID: %s, Path: %s\n", i+1, dashboard.UID, dashboard.RelativePath)
 		if err := exportSingleUpdatedDashboard(dashboard.UID, dashboard.RelativePath, outputDir, port); err != nil {
 			log.Printf("Warning: Failed to export dashboard %s: %v", dashboard.UID, err)
+			summary.ExportFailed = append(summary.ExportFailed, filepath.Base(dashboard.RelativePath))
 			continue
 		}
+		summary.ExportSuccess++
 		exportCount++
 	}
 
@@ -521,7 +542,7 @@ func loginPercli() error {
 	return nil
 }
 
-func migrateDashboardsToPerses(grafanaOutputDir, persesOutputDir string) error {
+func migrateDashboardsToPerses(grafanaOutputDir, persesOutputDir string, summary *MigrationSummary) error {
 	binPath := "./bin/percli"
 
 	// Check if percli binary exists
@@ -569,7 +590,7 @@ func migrateDashboardsToPerses(grafanaOutputDir, persesOutputDir string) error {
 
 		// Construct output file path in perses directory maintaining subdirectory structure
 		outputFile := filepath.Join(persesOutputDir, relPath)
-		
+
 		// Create subdirectory if needed
 		outputDir := filepath.Dir(outputFile)
 		if err := os.MkdirAll(outputDir, 0755); err != nil {
@@ -582,6 +603,7 @@ func migrateDashboardsToPerses(grafanaOutputDir, persesOutputDir string) error {
 		output, err := cmd.Output()
 		if err != nil {
 			log.Printf("Warning: Failed to migrate %s: %v", filepath.Base(file), err)
+			summary.MigrationFailed = append(summary.MigrationFailed, filepath.Base(file))
 			continue
 		}
 
@@ -595,15 +617,64 @@ func migrateDashboardsToPerses(grafanaOutputDir, persesOutputDir string) error {
 		// Save the migrated dashboard to perses output directory
 		if err := os.WriteFile(outputFile, cleanedOutput, 0644); err != nil {
 			log.Printf("Warning: Failed to save migrated dashboard %s: %v", filepath.Base(file), err)
+			summary.MigrationFailed = append(summary.MigrationFailed, filepath.Base(file))
 			continue
 		}
 
 		fmt.Printf("    → Successfully migrated to: %s\n", relPath)
+		summary.MigrationSuccess++
 		migratedCount++
 	}
 
 	fmt.Printf("Successfully migrated %d/%d dashboards to Perses Schema format\n", migratedCount, len(files))
 	return nil
+}
+
+func displayMigrationSummary(summary *MigrationSummary) {
+	fmt.Printf("\n%s\n", strings.Repeat("=", 60))
+	fmt.Printf("                    MIGRATION SUMMARY\n")
+	fmt.Printf("%s\n", strings.Repeat("=", 60))
+
+	fmt.Printf("Total Grafana dashboards processed: %d\n\n", summary.TotalDashboards)
+
+	// Schema Update Results
+	fmt.Printf("Grafana Schema Update: %d successful, %d failed\n", summary.SchemaUpdateSuccess, len(summary.SchemaUpdateFailed))
+	if len(summary.SchemaUpdateFailed) > 0 {
+		fmt.Printf("  Failed schema updates:\n")
+		for _, name := range summary.SchemaUpdateFailed {
+			fmt.Printf("    - %s\n", name)
+		}
+	}
+
+	// Export Results
+	fmt.Printf("\nExport: %d successful, %d failed\n", summary.ExportSuccess, len(summary.ExportFailed))
+	if len(summary.ExportFailed) > 0 {
+		fmt.Printf("  Failed exports:\n")
+		for _, name := range summary.ExportFailed {
+			fmt.Printf("    - %s\n", name)
+		}
+	}
+
+	// Migration Results
+	fmt.Printf("\nPerses Migration: %d successful, %d failed\n", summary.MigrationSuccess, len(summary.MigrationFailed))
+	if len(summary.MigrationFailed) > 0 {
+		fmt.Printf("  Failed migrations:\n")
+		for _, name := range summary.MigrationFailed {
+			fmt.Printf("    - %s\n", name)
+		}
+	}
+
+	// Overall Success Rate
+	totalFailures := len(summary.SchemaUpdateFailed) + len(summary.ExportFailed) + len(summary.MigrationFailed)
+	successRate := float64(summary.TotalDashboards-totalFailures) / float64(summary.TotalDashboards) * 100
+	fmt.Printf("\nOverall Success Rate: %.1f%%\n", successRate)
+
+	if totalFailures == 0 {
+		fmt.Printf("✓ All dashboards migrated successfully!\n")
+	} else {
+		fmt.Printf("⚠ %d dashboard(s) encountered issues during migration\n", totalFailures)
+	}
+	fmt.Printf("%s\n", strings.Repeat("=", 60))
 }
 
 func removeDatasourceNames(jsonData []byte) ([]byte, error) {
