@@ -64,6 +64,30 @@ migrate-recursive: build
 	fi
 	./$(BINARY_PATH) --input-dir=$(INPUT_DIR) --cleanup --recursive $(if $(OUTPUT_DIR),--output-dir=$(OUTPUT_DIR)) $(EXTRA_FLAGS)
 
+# Format and lint targets
+.PHONY: format-check
+format-check:
+	@echo "Checking Go code formatting..."
+	@if [ "$$(gofmt -s -l . | wc -l)" -gt 0 ]; then \
+		echo "The following files are not formatted:"; \
+		gofmt -s -l .; \
+		echo "Run 'make format' to fix formatting issues."; \
+		exit 1; \
+	fi
+	@echo "✓ All Go files are properly formatted"
+
+.PHONY: format
+format:
+	@echo "Formatting Go code..."
+	gofmt -s -w .
+	@echo "✓ Go files formatted"
+
+.PHONY: lint
+lint: format-check
+	@echo "Running go vet..."
+	$(GOVET) ./...
+	@echo "✓ go vet passed"
+
 # Cleanup targets
 .PHONY: clean
 clean:
