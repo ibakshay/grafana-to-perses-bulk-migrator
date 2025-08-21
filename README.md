@@ -61,6 +61,7 @@ A fully automated command-line tool for bulk migration of Grafana dashboards to 
 | `--wait` | Time to wait for containers to start | `10s` | ❌ |
 | `--perses-version` | Version of percli to download | `0.52.0-beta.3` | ❌ |
 | `--recursive` | Process JSON files recursively in subdirectories | `false` | ❌ |
+| `--use-default-perses-datasource` | Remove datasource names to use default Perses datasource | `true` | ❌ |
 | `--help` | Show help message | `false` | ❌ |
 
 ## Migration Process
@@ -159,9 +160,8 @@ The tool provides a detailed summary showing:
 - Overall success rate
 - List of failed items for troubleshooting
 
-## Support
 
-For issues related to:
-- **Grafana dashboard compatibility**: Check Grafana documentation
-- **Perses features**: Refer to Perses documentation
-- **Migration tool bugs**: Review error messages and migration summary
+## License
+
+The code is licensed under an [Apache 2.0](./LICENSE) license.
+

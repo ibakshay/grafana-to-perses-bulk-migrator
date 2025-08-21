@@ -27,6 +27,7 @@ var (
 	waitTime      = flag.Duration("wait", 10*time.Second, "Time to wait for containers to start (default: 10s)")
 	persesVersion = flag.String("perses-version", "0.52.0-beta.3", "Version of percli to download (default: 0.52.0-beta.3)")
 	recursive     = flag.Bool("recursive", false, "Process JSON files recursively in subdirectories (default: false)")
+	useDefaultPersesDatasource = flag.Bool("use-default-perses-datasource", true, "Remove datasource names to use default Perses datasource (default: true)")
 	help          = flag.Bool("help", false, "Show help message")
 )
 
@@ -575,6 +576,14 @@ func migrateDashboardsToPerses(grafanaOutputDir, persesOutputDir string, summary
 	}
 
 	fmt.Printf("Found %d Grafana dashboards to migrate to Perses\n", len(files))
+	
+	// Show datasource handling strategy
+	if *useDefaultPersesDatasource {
+		fmt.Printf("Datasource strategy: Removing datasource names to use default Perses datasource\n")
+	} else {
+		fmt.Printf("Datasource strategy: Preserving original datasource names\n")
+	}
+	
 	fmt.Printf("\nMigrating dashboards to Perses Schema format:\n")
 
 	migratedCount := 0
@@ -607,11 +616,19 @@ func migrateDashboardsToPerses(grafanaOutputDir, persesOutputDir string, summary
 			continue
 		}
 
-		// Clean up datasource references to use default datasource
-		cleanedOutput, err := removeDatasourceNames(output)
-		if err != nil {
-			log.Printf("Warning: Failed to clean datasource references in %s: %v", filepath.Base(file), err)
-			cleanedOutput = output // Use original output if cleanup fails
+		// Handle datasource references based on flag
+		var cleanedOutput []byte
+		if *useDefaultPersesDatasource {
+			// Remove datasource names to use default Perses datasource
+			var err error
+			cleanedOutput, err = removeDatasourceNames(output)
+			if err != nil {
+				log.Printf("Warning: Failed to clean datasource references in %s: %v", filepath.Base(file), err)
+				cleanedOutput = output // Use original output if cleanup fails
+			}
+		} else {
+			// Keep original datasource names
+			cleanedOutput = output
 		}
 
 		// Save the migrated dashboard to perses output directory
