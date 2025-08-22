@@ -160,6 +160,31 @@ The tool provides a detailed summary showing:
 - Overall success rate
 - List of failed items for troubleshooting
 
+### Example Output
+
+```
+============================================================
+                    MIGRATION SUMMARY
+============================================================
+Total Grafana dashboards processed: 500
+
+Grafana Schema Update: 500 successful, 0 failed
+
+Export: 498 successful, 2 failed
+  Failed exports:
+    - corrupted-dashboard.json
+    - invalid-json-format.json
+
+Perses Migration: 496 successful, 2 failed
+  Failed migrations:
+    - dashboard-with-unsupported-panel.json
+    - complex-templating.json
+
+Overall Success Rate: 99.2%
+⚠ 4 dashboard(s) encountered issues during migration
+============================================================
+```
+
 
 ## License
 
