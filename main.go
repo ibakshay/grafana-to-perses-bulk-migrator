@@ -537,7 +537,7 @@ func loginPercli() error {
 	fmt.Printf("Logging into Perses at %s...\n", loginURL)
 
 	// Run percli login command
-	cmd := exec.Command(binPath, "login", loginURL, "-u", "admin", "-p", "password")
+	cmd := exec.Command(binPath, "login", loginURL)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to login to Perses: %v, output: %s", err, string(output))
