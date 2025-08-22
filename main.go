@@ -16,6 +16,9 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	persesv1 "github.com/perses/perses/pkg/model/api/v1"
+	"github.com/perses/perses/pkg/model/api/v1/common"
 )
 
 var (
@@ -155,6 +158,7 @@ func deleteContainer(port string) error {
 }
 
 func startGrafanaContainer(port string) error {
+	fmt.Printf("Starting Grafana container...\n")
 	running, err := isContainerRunning(port)
 	if err != nil {
 		return fmt.Errorf("failed to check if Grafana container is running: %v", err)
@@ -695,39 +699,41 @@ func displayMigrationSummary(summary *MigrationSummary) {
 }
 
 func removeDatasourceNames(jsonData []byte) ([]byte, error) {
-	var dashboard map[string]any
+	var dashboard persesv1.Dashboard
 	if err := json.Unmarshal(jsonData, &dashboard); err != nil {
 		return nil, err
 	}
 
-	// Navigate directly to spec.panels
-	if spec, ok := dashboard["spec"].(map[string]any); ok {
-		if panels, ok := spec["panels"].(map[string]any); ok {
-			for _, panel := range panels {
-				if panelMap, ok := panel.(map[string]any); ok {
-					if panelSpec, ok := panelMap["spec"].(map[string]any); ok {
-						if queries, ok := panelSpec["queries"].([]any); ok {
-							for _, query := range queries {
-								if queryMap, ok := query.(map[string]any); ok {
-									if querySpec, ok := queryMap["spec"].(map[string]any); ok {
-										if plugin, ok := querySpec["plugin"].(map[string]any); ok {
-											if pluginSpec, ok := plugin["spec"].(map[string]any); ok {
-												if datasource, ok := pluginSpec["datasource"].(map[string]any); ok {
-													if kind, hasKind := datasource["kind"]; hasKind {
-														pluginSpec["datasource"] = map[string]any{"kind": kind}
-													}
-												}
-											}
-										}
-									}
-								}
-							}
-						}
-					}
-				}
-			}
+	// Iterate through panels and clean datasource references
+
+	for _, panel := range dashboard.Spec.Panels {
+		for _, query := range panel.Spec.Queries {
+			cleanDatasourceInPlugin(&query.Spec.Plugin)
 		}
 	}
 
 	return json.MarshalIndent(dashboard, "", "  ")
+}
+
+func cleanDatasourceInPlugin(plugin *common.Plugin) {
+	// Only clean datasource references if the flag is set to use default Perses datasource
+	if !*useDefaultPersesDatasource {
+		return
+	}
+
+	// Access the datasource from the plugin spec
+	if pluginSpec, ok := plugin.Spec.(map[string]any); ok {
+		if datasourceRef, ok := pluginSpec["datasource"].(map[string]any); ok {
+			// Remove the "default" property
+			delete(datasourceRef, "default")
+
+			// Remove the "name" property
+			delete(datasourceRef, "name")
+
+			// Remove the "spec" property from plugin if it exists
+			if pluginData, hasPlugin := datasourceRef["plugin"].(map[string]any); hasPlugin {
+				delete(pluginData, "spec")
+			}
+		}
+	}
 }
