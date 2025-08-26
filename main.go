@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -403,13 +404,20 @@ func exportSingleUpdatedDashboard(uid, relativePath, outputDir, port string) err
 	// Use the UID as the base filename
 	slug := uid
 	if title, ok := spec["title"].(string); ok && title != "" {
-		// Clean the title to make it filename-safe
-		slug = strings.ReplaceAll(title, " ", "_")
-		slug = strings.ReplaceAll(slug, "/", "_")
+		// Clean the title to make it regex-compliant
+		slug = sanitizeFilenameForRegex(title)
 	}
 
-	timestamp := time.Now().Format("20060102_1504")
-	filename := fmt.Sprintf("%s_%s.json", slug, timestamp)
+	timestamp := time.Now().Format("20060102-1504")
+	filename := fmt.Sprintf("%s-%s.json", slug, timestamp)
+
+	// Validate that the generated filename matches the required regex pattern
+	// Pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+	if !validateFilenameRegex(filename) {
+		log.Printf("Warning: Generated filename '%s' does not match regex pattern, using UID fallback", filename)
+		filename = fmt.Sprintf("%s-%s.json", sanitizeFilenameForRegex(uid), timestamp)
+	}
+
 	outputPath := filepath.Join(targetDir, filename)
 
 	// Export the spec (dashboard definition) as JSON
@@ -736,4 +744,40 @@ func cleanDatasourceInPlugin(plugin *common.Plugin) {
 			}
 		}
 	}
+}
+
+// sanitizeFilenameForRegex converts a dashboard title to a filename that complies with
+// the regex pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+func sanitizeFilenameForRegex(title string) string {
+	// Convert to lowercase
+	result := strings.ToLower(title)
+
+	// Replace any non-alphanumeric characters with hyphens using regex
+	reg := regexp.MustCompile(`[^a-z0-9]+`)
+	result = reg.ReplaceAllString(result, "-")
+
+	// Remove leading and trailing hyphens
+	result = strings.Trim(result, "-")
+
+	// Ensure the result is not empty
+	if result == "" {
+		return "dashboard"
+	}
+
+	return result
+}
+
+// validateFilenameRegex validates that a filename matches the required regex pattern
+func validateFilenameRegex(filename string) bool {
+	// Remove .json extension for validation
+	name := strings.TrimSuffix(filename, ".json")
+
+	// Regex pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+	// This matches the main part of the full pattern for the basename
+	pattern := `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	matched, err := regexp.MatchString(pattern, name)
+	if err != nil {
+		return false
+	}
+	return matched
 }
