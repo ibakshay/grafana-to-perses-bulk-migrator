@@ -276,7 +276,7 @@ func importDashboardToGrafana(inputFile, port string) (string, error) {
 		return "", fmt.Errorf("failed to read dashboard file: %v", err)
 	}
 
-	var dashboard map[string]interface{}
+	var dashboard map[string]any
 	if err := json.Unmarshal(dashboardData, &dashboard); err != nil {
 		return "", fmt.Errorf("failed to parse dashboard JSON: %v", err)
 	}
@@ -292,7 +292,7 @@ func importDashboardToGrafana(inputFile, port string) (string, error) {
 	delete(dashboard, "uid")
 
 	// Import the dashboard to Grafana (which migrates the schema)
-	importPayload := map[string]interface{}{
+	importPayload := map[string]any{
 		"dashboard": dashboard,
 		"overwrite": true,
 	}
@@ -314,7 +314,7 @@ func importDashboardToGrafana(inputFile, port string) (string, error) {
 		return "", fmt.Errorf("import failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
-	var importResponse map[string]interface{}
+	var importResponse map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&importResponse); err != nil {
 		return "", fmt.Errorf("failed to decode import response: %v", err)
 	}
@@ -376,13 +376,13 @@ func exportSingleUpdatedDashboard(uid, relativePath, outputDir, port string) err
 		return fmt.Errorf("dashboard fetch failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
-	var dashboardResponse map[string]interface{}
+	var dashboardResponse map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&dashboardResponse); err != nil {
 		return fmt.Errorf("failed to decode dashboard response: %v", err)
 	}
 
 	// Extract spec which contains the dashboard definition
-	spec, ok := dashboardResponse["spec"].(map[string]interface{})
+	spec, ok := dashboardResponse["spec"].(map[string]any)
 	if !ok {
 		return fmt.Errorf("no spec found in dashboard response")
 	}
