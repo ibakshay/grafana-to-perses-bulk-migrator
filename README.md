@@ -60,6 +60,7 @@ A fully automated command-line tool for bulk migration of Grafana dashboards to 
 | `--perses-port` | Port for Perses container | `8080` | ❌ |
 | `--wait` | Time to wait for containers to start | `10s` | ❌ |
 | `--perses-version` | Version of percli to download | `0.52.0-beta.3` | ❌ |
+| `--perses-docker-image` | Docker image for Perses container | `persesdev/perses:latest` | ❌ |
 | `--recursive` | Process JSON files recursively in subdirectories | `false` | ❌ |
 | `--use-default-perses-datasource` | Remove datasource names to use default Perses datasource | `true` | ❌ |
 | `--help` | Show help message | `false` | ❌ |

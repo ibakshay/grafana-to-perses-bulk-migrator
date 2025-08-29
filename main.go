@@ -30,6 +30,7 @@ var (
 	persesPort                 = flag.String("perses-port", "8080", "Port for Perses container")
 	waitTime                   = flag.Duration("wait", 10*time.Second, "Time to wait for containers to start (default: 10s)")
 	persesVersion              = flag.String("perses-version", "0.52.0-beta.3", "Version of percli to download (default: 0.52.0-beta.3)")
+	persesDockerImage          = flag.String("perses-docker-image", "persesdev/perses:latest", "Docker image for Perses container (default: persesdev/perses:latest)")
 	recursive                  = flag.Bool("recursive", false, "Process JSON files recursively in subdirectories (default: false)")
 	useDefaultPersesDatasource = flag.Bool("use-default-perses-datasource", true, "Remove datasource names to use default Perses datasource (default: true)")
 	help                       = flag.Bool("help", false, "Show help message")
@@ -184,7 +185,7 @@ func startPersesContainer(port string) error {
 	}
 
 	if !running {
-		if err := startContainer("perses", "persesdev/perses", port, "8080"); err != nil {
+		if err := startContainer("perses", fmt.Sprintf("%s", *persesDockerImage), port, "8080"); err != nil {
 			return fmt.Errorf("failed to start Perses container: %v", err)
 		}
 		fmt.Printf("Waiting for Perses to start...\n")
