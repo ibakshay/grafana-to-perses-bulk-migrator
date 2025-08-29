@@ -185,7 +185,7 @@ func startPersesContainer(port string) error {
 	}
 
 	if !running {
-		if err := startContainer("perses", fmt.Sprintf("%s", *persesDockerImage), port, "8080"); err != nil {
+		if err := startContainer("perses", *persesDockerImage), port, "8080"); err != nil {
 			return fmt.Errorf("failed to start Perses container: %v", err)
 		}
 		fmt.Printf("Waiting for Perses to start...\n")
